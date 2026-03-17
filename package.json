@@ -1,0 +1,41 @@
+{
+  "name": "agent-billy",
+  "version": "1.0.2",
+  "description": "Agent Billy — Local MCP server proxy for Claude Desktop, Cursor, and more",
+  "type": "module",
+  "bin": {
+    "agent-billy": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "stripe",
+    "billing",
+    "mcp",
+    "ai-agent",
+    "claude",
+    "cursor"
+  ],
+  "author": "Agent Billy <hello@agentbilly.ai>",
+  "license": "MIT",
+  "homepage": "https://agentbilly.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agent-billy/mcp"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.0"
+  }
+}

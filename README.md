@@ -5,14 +5,14 @@ Local MCP proxy that gives AI assistants (Claude, Cursor, Copilot) secure, role-
 ## Quick Start
 
 ```bash
-npx agent-billy --api-url https://yourorg.agentbilly.ai --token YOUR_API_KEY
+npx agent-billy --api-url https://yourorg.agentbilly.ai --api-key billy_your-api-key
 ```
 
 Or use environment variables:
 
 ```bash
 export BILLY_API_URL=https://yourorg.agentbilly.ai
-export BILLY_TOKEN=billy_your-api-key
+export BILLY_API_KEY=billy_your-api-key
 npx agent-billy
 ```
 
@@ -30,7 +30,7 @@ Add to your `claude_desktop_config.json`:
       "args": ["-y", "agent-billy"],
       "env": {
         "BILLY_API_URL": "https://yourorg.agentbilly.ai",
-        "BILLY_TOKEN": "billy_your-api-key"
+        "BILLY_API_KEY": "billy_your-api-key"
       }
     }
   }
@@ -46,7 +46,7 @@ Config file locations:
 ```bash
 claude mcp add agent-billy \
   -e BILLY_API_URL=https://yourorg.agentbilly.ai \
-  -e BILLY_TOKEN=billy_your-api-key \
+  -e BILLY_API_KEY=billy_your-api-key \
   -- npx -y agent-billy
 ```
 
@@ -60,7 +60,7 @@ Go to **Settings > MCP Servers > Add new MCP server** and enter:
   "args": ["-y", "agent-billy"],
   "env": {
     "BILLY_API_URL": "https://yourorg.agentbilly.ai",
-    "BILLY_TOKEN": "billy_your-api-key"
+    "BILLY_API_KEY": "billy_your-api-key"
   }
 }
 ```
@@ -78,7 +78,7 @@ Add to your `settings.json`:
         "args": ["-y", "agent-billy"],
         "env": {
           "BILLY_API_URL": "https://yourorg.agentbilly.ai",
-          "BILLY_TOKEN": "billy_your-api-key"
+          "BILLY_API_KEY": "billy_your-api-key"
         }
       }
     }
@@ -93,7 +93,7 @@ Generate an API key from your Billy dashboard:
 1. Log in at `https://yourorg.agentbilly.ai`
 2. Go to **Settings > API Keys**
 3. Click **Generate Key** and choose a role
-4. Copy the key and use it as `BILLY_TOKEN`
+4. Copy the key and use it as your `BILLY_API_KEY`
 
 API keys inherit the role you assign when creating them. A Billing Clerk key can only perform Billing Clerk actions. Keys can be revoked at any time from Settings.
 
@@ -129,7 +129,7 @@ API keys inherit the role you assign when creating them. A Billing Clerk key can
 
 ## Role-Based Access
 
-All permissions are enforced server-side. The token inherits the role of the user who created it.
+All permissions are enforced server-side. The API key inherits the role of the user who created it.
 
 | Role | Read | Refunds | Manage Subs | Invoices | Customers | Coupons |
 |------|------|---------|-------------|----------|-----------|---------|
@@ -152,12 +152,12 @@ Attempting to exceed your limit returns a permission error. The action is logged
 ## CLI Options
 
 ```
-agent-billy --api-url <url> --token <jwt>
+agent-billy --api-url <url> --api-key <key>
 
 Options:
   --api-url   Billy container API URL (or BILLY_API_URL env var)
-  --token     JWT auth token (or BILLY_TOKEN env var)
-  --api-key   API key, alternative to token (or BILLY_API_KEY env var)
+  --api-key   API key (or BILLY_API_KEY env var)
+  --token     JWT auth token, alternative to api-key (or BILLY_TOKEN env var)
   --help, -h  Show help
 ```
 

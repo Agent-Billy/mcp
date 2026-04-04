@@ -77,6 +77,18 @@ function formatCurrency(amount: number, currency = "usd"): string {
   return `${symbol}${(amount / 100).toFixed(2)}`;
 }
 
+/**
+ * Sanitize a string value from an API response to prevent prompt injection
+ * and control-character abuse when interpolated into LLM-facing output.
+ */
+function sanitize(value: unknown, maxLen = 200): string {
+  if (value == null) return "";
+  const s = String(value);
+  // Strip control characters (except newline/tab) and trim
+  const cleaned = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "…" : cleaned;
+}
+
 function formatList(items: unknown[], formatter: (item: unknown) => string, label: string): string {
   const arr = Array.isArray(items) ? items : [];
   if (arr.length === 0) {
@@ -127,11 +139,14 @@ export function billyResponse(action: string, data: unknown): string {
         return formatCouponDeleted(data);
       case "search":
         return formatSearchResults(data as SearchResult);
-      default:
-        return JSON.stringify(data, null, 2);
+      default: {
+        // Truncate raw JSON fallback to prevent excessive data exposure
+        const raw = JSON.stringify(data, null, 2);
+        return raw.length > 2000 ? raw.slice(0, 2000) + "\n… (truncated)" : raw;
+      }
     }
   } catch {
-    return JSON.stringify(data, null, 2);
+    return "(Unable to format response)";
   }
 }
 
@@ -163,7 +178,7 @@ function formatChargeList(data: unknown): string {
   let response = formatList(items, (item) => {
     const c = item as ChargeItem;
     const amount = c.amount != null ? formatCurrency(c.amount, c.currency) : "N/A";
-    return `${c.id} | ${amount} | ${c.status ?? "unknown"} | ${c.customer_email ?? "no email"}`;
+    return `${sanitize(c.id)} | ${amount} | ${sanitize(c.status) || "unknown"} | ${sanitize(c.customer_email) || "no email"}`;
   }, "charges");
 
   if (failedCount > 0) {
@@ -175,11 +190,11 @@ function formatChargeList(data: unknown): string {
 
 function formatChargeDetail(charge: ChargeItem): string {
   const amount = charge.amount != null ? formatCurrency(charge.amount, charge.currency) : "N/A";
-  let response = `Charge ${charge.id ?? "unknown"}:\n\n`;
+  let response = `Charge ${sanitize(charge.id) || "unknown"}:\n\n`;
   response += `- Amount: ${amount}\n`;
-  response += `- Status: ${charge.status ?? "unknown"}\n`;
-  response += `- Customer: ${charge.customer_email ?? "N/A"}\n`;
-  response += `- Description: ${charge.description ?? "none"}`;
+  response += `- Status: ${sanitize(charge.status) || "unknown"}\n`;
+  response += `- Customer: ${sanitize(charge.customer_email) || "N/A"}\n`;
+  response += `- Description: ${sanitize(charge.description) || "none"}`;
 
   if (charge.status === "succeeded") {
     response += `\n\nNeed to issue a refund for this charge?`;
@@ -192,21 +207,27 @@ function formatCustomerList(data: unknown): string {
   const items = extractArray(data);
   return formatList(items, (item) => {
     const c = item as CustomerItem;
-    return `${c.id} | ${c.name ?? "unnamed"} | ${c.email ?? "no email"}`;
+    return `${sanitize(c.id)} | ${sanitize(c.name) || "unnamed"} | ${sanitize(c.email) || "no email"}`;
   }, "customers");
 }
 
+/** Allowlisted fields safe to expose from customer objects. */
+const CUSTOMER_SAFE_FIELDS = new Set([
+  "id", "name", "email", "description", "phone", "currency",
+  "created", "delinquent", "balance", "default_source",
+]);
+
 function formatCustomerDetail(customer: CustomerItem): string {
-  let response = `Customer ${customer.id ?? "unknown"}:\n\n`;
-  response += `- Name: ${customer.name ?? "not set"}\n`;
-  response += `- Email: ${customer.email ?? "not set"}`;
+  let response = `Customer ${sanitize(customer.id) || "unknown"}:\n\n`;
+  response += `- Name: ${sanitize(customer.name) || "not set"}\n`;
+  response += `- Email: ${sanitize(customer.email) || "not set"}`;
 
   const extra = Object.entries(customer).filter(
-    ([k]) => !["id", "name", "email", "object"].includes(k)
+    ([k]) => !["id", "name", "email", "object"].includes(k) && CUSTOMER_SAFE_FIELDS.has(k)
   );
   for (const [key, value] of extra) {
     if (value != null && typeof value !== "object") {
-      response += `\n- ${key}: ${value}`;
+      response += `\n- ${sanitize(key)}: ${sanitize(value)}`;
     }
   }
 
@@ -214,11 +235,11 @@ function formatCustomerDetail(customer: CustomerItem): string {
 }
 
 function formatCustomerCreated(customer: CustomerItem): string {
-  return `Done! Created customer ${customer.id ?? ""}${customer.email ? ` (${customer.email})` : ""}. They're ready for subscriptions and invoicing.`;
+  return `Done! Created customer ${sanitize(customer.id)}${customer.email ? ` (${sanitize(customer.email)})` : ""}. They're ready for subscriptions and invoicing.`;
 }
 
 function formatCustomerUpdated(customer: CustomerItem): string {
-  return `Updated! Customer ${customer.id ?? ""} has been modified${customer.email ? ` — email: ${customer.email}` : ""}.`;
+  return `Updated! Customer ${sanitize(customer.id)} has been modified${customer.email ? ` — email: ${sanitize(customer.email)}` : ""}.`;
 }
 
 function formatSubscriptionList(data: unknown): string {
@@ -227,7 +248,7 @@ function formatSubscriptionList(data: unknown): string {
 
   let response = formatList(items, (item) => {
     const s = item as SubscriptionItem;
-    return `${s.id} | ${s.status ?? "unknown"} | ${s.customer_email ?? "no email"} | ${s.plan_name ?? "unknown plan"}`;
+    return `${sanitize(s.id)} | ${sanitize(s.status) || "unknown"} | ${sanitize(s.customer_email) || "no email"} | ${sanitize(s.plan_name) || "unknown plan"}`;
   }, "subscriptions");
 
   if (pastDue > 0) {
@@ -238,19 +259,19 @@ function formatSubscriptionList(data: unknown): string {
 }
 
 function formatSubscriptionCanceled(sub: SubscriptionItem): string {
-  let response = `Done! Subscription ${sub.id ?? ""} has been canceled`;
+  let response = `Done! Subscription ${sanitize(sub.id)} has been canceled`;
   if (sub.current_period_end) {
-    response += `. It will remain active until ${sub.current_period_end}`;
+    response += `. It will remain active until ${sanitize(sub.current_period_end)}`;
   }
   response += ".";
   if (sub.customer_email) {
-    response += ` Should I send a confirmation to ${sub.customer_email}?`;
+    response += ` Should I send a confirmation to ${sanitize(sub.customer_email)}?`;
   }
   return response;
 }
 
 function formatSubscriptionReactivated(sub: SubscriptionItem): string {
-  return `Subscription ${sub.id ?? ""} has been reactivated! The customer will continue on their existing plan.`;
+  return `Subscription ${sanitize(sub.id)} has been reactivated! The customer will continue on their existing plan.`;
 }
 
 function formatInvoiceList(data: unknown): string {
@@ -258,16 +279,16 @@ function formatInvoiceList(data: unknown): string {
   return formatList(items, (item) => {
     const inv = item as InvoiceItem;
     const amount = inv.amount_due != null ? formatCurrency(inv.amount_due) : "N/A";
-    return `${inv.id} | ${amount} | ${inv.status ?? "unknown"} | ${inv.customer_email ?? "no email"}`;
+    return `${sanitize(inv.id)} | ${amount} | ${sanitize(inv.status) || "unknown"} | ${sanitize(inv.customer_email) || "no email"}`;
   }, "invoices");
 }
 
 function formatInvoiceSent(invoice: InvoiceItem): string {
-  return `Invoice ${invoice.id ?? ""} has been sent${invoice.customer_email ? ` to ${invoice.customer_email}` : ""}!`;
+  return `Invoice ${sanitize(invoice.id)} has been sent${invoice.customer_email ? ` to ${sanitize(invoice.customer_email)}` : ""}!`;
 }
 
 function formatInvoiceVoided(invoice: InvoiceItem): string {
-  return `Invoice ${invoice.id ?? ""} has been voided. It will no longer be collectible.`;
+  return `Invoice ${sanitize(invoice.id)} has been voided. It will no longer be collectible.`;
 }
 
 function formatRefundList(data: unknown): string {
@@ -275,7 +296,7 @@ function formatRefundList(data: unknown): string {
   return formatList(items, (item) => {
     const r = item as RefundResult;
     const amount = r.amount != null ? formatCurrency(r.amount) : "N/A";
-    return `${r.id} | ${amount} | ${r.status ?? "unknown"} | charge: ${r.charge ?? "N/A"}`;
+    return `${sanitize(r.id)} | ${amount} | ${sanitize(r.status) || "unknown"} | charge: ${sanitize(r.charge) || "N/A"}`;
   }, "refunds");
 }
 
@@ -283,10 +304,10 @@ function formatRefundCreated(refund: RefundResult): string {
   const amount = refund.amount != null ? formatCurrency(refund.amount) : "the amount";
   let response = `Done! Refunded ${amount}`;
   if (refund.customer_email) {
-    response += ` to ${refund.customer_email}`;
+    response += ` to ${sanitize(refund.customer_email)}`;
   }
   if (refund.charge) {
-    response += ` for charge ${refund.charge}`;
+    response += ` for charge ${sanitize(refund.charge)}`;
   }
   response += `. The refund should appear in their account within 5-10 business days.`;
   response += `\n\nShould I send a confirmation email to the customer?`;
@@ -302,7 +323,7 @@ function formatCouponList(data: unknown): string {
       : c.amount_off != null
         ? `${formatCurrency(c.amount_off)} off`
         : "unknown discount";
-    return `${c.id ?? c.name} | ${discount} | ${c.duration ?? "unknown duration"}`;
+    return `${sanitize(c.id ?? c.name)} | ${discount} | ${sanitize(c.duration) || "unknown duration"}`;
   }, "coupons");
 }
 
@@ -312,12 +333,12 @@ function formatCouponCreated(coupon: CouponItem): string {
     : coupon.amount_off != null
       ? `${formatCurrency(coupon.amount_off)} off`
       : "";
-  return `Coupon "${coupon.name ?? coupon.id}" created! ${discount ? `(${discount})` : ""} Ready to apply to customers.`;
+  return `Coupon "${sanitize(coupon.name ?? coupon.id)}" created! ${discount ? `(${discount})` : ""} Ready to apply to customers.`;
 }
 
 function formatCouponDeleted(data: unknown): string {
   const d = data as { id?: string };
-  return `Coupon ${d.id ?? ""} has been deleted. It will no longer be available for new redemptions.`;
+  return `Coupon ${sanitize(d.id)} has been deleted. It will no longer be available for new redemptions.`;
 }
 
 function formatSearchResults(data: SearchResult): string {
@@ -326,11 +347,17 @@ function formatSearchResults(data: SearchResult): string {
     return "No results found for that search query.";
   }
 
+  /** Fields safe to display in search results. */
+  const SEARCH_SAFE_FIELDS = new Set([
+    "id", "name", "email", "status", "amount", "currency",
+    "customer_email", "plan_name", "description",
+  ]);
+
   const lines = results.map((r, i) => {
-    const type = r.type ?? "unknown";
+    const type = sanitize(r.type) || "unknown";
     const entries = Object.entries(r)
-      .filter(([k]) => k !== "type" && k !== "object")
-      .map(([k, v]) => `${k}: ${v}`)
+      .filter(([k]) => k !== "type" && k !== "object" && SEARCH_SAFE_FIELDS.has(k))
+      .map(([k, v]) => `${sanitize(k)}: ${sanitize(v)}`)
       .join(" | ");
     return `${i + 1}. [${type}] ${entries}`;
   });
@@ -366,5 +393,6 @@ export function billyError(error: unknown): string {
     return `We're hitting the rate limit. Give it a moment and try again.`;
   }
 
-  return `Something went wrong: ${msg}`;
+  // Generic fallback — never expose raw backend error details
+  return `Something went wrong. Please try again or contact support if the issue persists.`;
 }

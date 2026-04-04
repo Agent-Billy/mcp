@@ -48,6 +48,28 @@ export interface CreateRefundData {
   reason?: string;
 }
 
+/** Max allowed response body size (5 MB) to prevent memory exhaustion. */
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+/** Request timeout in milliseconds (30 seconds). */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Sanitize an error message so backend internals are never leaked.
+ * Keeps known safe HTTP status codes and strips everything else to a
+ * generic message.
+ */
+function sanitizeErrorMessage(raw: string): string {
+  // Truncate excessively long messages
+  const msg = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+  // Only surface the HTTP status — hide backend details
+  const statusMatch = msg.match(/\b(4\d{2}|5\d{2})\b/);
+  if (statusMatch) {
+    return `HTTP ${statusMatch[1]}`;
+  }
+  return "Unexpected error";
+}
+
 export class BillyClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
@@ -78,20 +100,42 @@ export class BillyClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
 
-    const res = await fetch(url, {
-      method,
-      headers: this.headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: this.headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error("Billy API error: request timed out");
+      }
+      throw new Error("Billy API error: network error");
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    // Guard against oversized responses (DoS / memory exhaustion)
+    const contentLength = res.headers.get("content-length");
+    if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
+      throw new Error("Billy API error: response too large");
+    }
 
     if (!res.ok) {
       let errorMessage: string;
       try {
         const errorBody = (await res.json()) as { error?: string; message?: string };
-        errorMessage =
+        const raw =
           errorBody.error || errorBody.message || `HTTP ${res.status}`;
+        errorMessage = sanitizeErrorMessage(raw);
       } catch {
-        errorMessage = `HTTP ${res.status} ${res.statusText}`;
+        errorMessage = `HTTP ${res.status}`;
       }
       throw new Error(`Billy API error: ${errorMessage}`);
     }

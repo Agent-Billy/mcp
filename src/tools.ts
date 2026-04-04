@@ -9,6 +9,40 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BillyClient } from "./client.js";
 import { billyResponse, billyError } from "./personality.js";
 
+// ── Reusable validated schemas ──────────────────────────────
+const MAX_LIMIT = 100;
+const MAX_STRING = 1000;
+const MAX_QUERY = 500;
+const MAX_ID = 255;
+
+/** Stripe-style ID: alphanumeric, underscores, hyphens only — blocks path traversal */
+const stripeId = z
+  .string()
+  .max(MAX_ID)
+  .regex(/^[a-zA-Z0-9_-]+$/, "Invalid ID format");
+
+const paginationLimit = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_LIMIT)
+  .optional()
+  .describe(`Max number of items to return (1-${MAX_LIMIT}, default 25)`);
+
+const paginationOffset = z
+  .number()
+  .int()
+  .min(0)
+  .max(100000)
+  .optional()
+  .describe("Number of items to skip for pagination");
+
+const boundedString = (desc: string) =>
+  z.string().max(MAX_STRING).describe(desc);
+
+const boundedOptionalString = (desc: string) =>
+  z.string().max(MAX_STRING).optional().describe(desc);
+
 export function registerTools(server: McpServer, client: BillyClient): void {
   // ──────────────────────────────────────────────
   // READ TOOLS
@@ -18,8 +52,8 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_list_charges",
     "List recent charges from your Stripe account. Optionally filter by status (succeeded, failed, pending).",
     {
-      status: z.string().optional().describe("Filter by charge status: succeeded, failed, pending"),
-      limit: z.number().optional().describe("Max number of charges to return (default 25)"),
+      status: z.enum(["succeeded", "failed", "pending"]).optional().describe("Filter by charge status"),
+      limit: paginationLimit,
     },
     async ({ status, limit }) => {
       try {
@@ -35,7 +69,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_get_charge",
     "Get detailed information about a specific charge by its Stripe charge ID.",
     {
-      charge_id: z.string().describe("The Stripe charge ID (e.g., ch_1ABC...)"),
+      charge_id: stripeId.describe("The Stripe charge ID (e.g., ch_1ABC...)"),
     },
     async ({ charge_id }) => {
       try {
@@ -51,8 +85,8 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_list_customers",
     "List customers in your Stripe account.",
     {
-      limit: z.number().optional().describe("Max number of customers to return (default 25)"),
-      offset: z.number().optional().describe("Number of customers to skip for pagination"),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ limit, offset }) => {
       try {
@@ -68,7 +102,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_get_customer",
     "Get detailed information about a specific customer by their Stripe customer ID.",
     {
-      customer_id: z.string().describe("The Stripe customer ID (e.g., cus_1ABC...)"),
+      customer_id: stripeId.describe("The Stripe customer ID (e.g., cus_1ABC...)"),
     },
     async ({ customer_id }) => {
       try {
@@ -84,8 +118,8 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_list_subscriptions",
     "List subscriptions with optional status filter (active, past_due, canceled, trialing).",
     {
-      status: z.string().optional().describe("Filter by subscription status: active, past_due, canceled, trialing"),
-      limit: z.number().optional().describe("Max number of subscriptions to return (default 25)"),
+      status: z.enum(["active", "past_due", "canceled", "trialing"]).optional().describe("Filter by subscription status"),
+      limit: paginationLimit,
     },
     async ({ status, limit }) => {
       try {
@@ -101,8 +135,8 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_list_invoices",
     "List invoices with optional status filter (draft, open, paid, void, uncollectible).",
     {
-      status: z.string().optional().describe("Filter by invoice status: draft, open, paid, void, uncollectible"),
-      limit: z.number().optional().describe("Max number of invoices to return (default 25)"),
+      status: z.enum(["draft", "open", "paid", "void", "uncollectible"]).optional().describe("Filter by invoice status"),
+      limit: paginationLimit,
     },
     async ({ status, limit }) => {
       try {
@@ -146,7 +180,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_search",
     "Search across customers, charges, subscriptions, and invoices by keyword (email, name, ID, etc.).",
     {
-      query: z.string().describe("Search query (e.g., customer email, name, charge ID)"),
+      query: z.string().min(1).max(MAX_QUERY).describe("Search query (e.g., customer email, name, charge ID)"),
     },
     async ({ query }) => {
       try {
@@ -166,9 +200,9 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_create_refund",
     "Issue a refund for a charge. Optionally specify a partial amount and reason.",
     {
-      charge_id: z.string().describe("The Stripe charge ID to refund"),
-      amount: z.number().optional().describe("Partial refund amount in cents. Omit for full refund."),
-      reason: z.string().optional().describe("Reason for the refund: duplicate, fraudulent, requested_by_customer"),
+      charge_id: stripeId.describe("The Stripe charge ID to refund"),
+      amount: z.number().int().min(1).max(99999999).optional().describe("Partial refund amount in cents (1–999,999.99). Omit for full refund."),
+      reason: z.enum(["duplicate", "fraudulent", "requested_by_customer"]).optional().describe("Reason for the refund"),
     },
     async ({ charge_id, amount, reason }) => {
       try {
@@ -184,10 +218,10 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_create_customer",
     "Create a new Stripe customer with email and optional name, description, and metadata.",
     {
-      email: z.string().describe("Customer email address"),
-      name: z.string().optional().describe("Customer full name"),
-      description: z.string().optional().describe("Internal description or notes"),
-      metadata: z.record(z.string()).optional().describe("Key-value metadata to attach"),
+      email: z.string().email().max(254).describe("Customer email address"),
+      name: boundedOptionalString("Customer full name"),
+      description: boundedOptionalString("Internal description or notes"),
+      metadata: z.record(z.string().max(500)).optional().describe("Key-value metadata to attach"),
     },
     async ({ email, name, description, metadata }) => {
       try {
@@ -203,11 +237,11 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_update_customer",
     "Update an existing customer's email, name, description, or metadata.",
     {
-      customer_id: z.string().describe("The Stripe customer ID to update"),
-      email: z.string().optional().describe("New email address"),
-      name: z.string().optional().describe("New name"),
-      description: z.string().optional().describe("New description"),
-      metadata: z.record(z.string()).optional().describe("Updated metadata key-value pairs"),
+      customer_id: stripeId.describe("The Stripe customer ID to update"),
+      email: z.string().email().max(254).optional().describe("New email address"),
+      name: boundedOptionalString("New name"),
+      description: boundedOptionalString("New description"),
+      metadata: z.record(z.string().max(500)).optional().describe("Updated metadata key-value pairs"),
     },
     async ({ customer_id, email, name, description, metadata }) => {
       try {
@@ -223,7 +257,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_cancel_subscription",
     "Cancel a subscription. By default cancels at end of billing period. Set immediately=true to cancel right now.",
     {
-      subscription_id: z.string().describe("The Stripe subscription ID to cancel"),
+      subscription_id: stripeId.describe("The Stripe subscription ID to cancel"),
       immediately: z.boolean().optional().describe("If true, cancel immediately instead of at period end (default false)"),
     },
     async ({ subscription_id, immediately }) => {
@@ -240,7 +274,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_reactivate_subscription",
     "Reactivate a previously canceled subscription (only works if it hasn't fully expired yet).",
     {
-      subscription_id: z.string().describe("The Stripe subscription ID to reactivate"),
+      subscription_id: stripeId.describe("The Stripe subscription ID to reactivate"),
     },
     async ({ subscription_id }) => {
       try {
@@ -256,7 +290,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_send_invoice",
     "Send an invoice to the customer via email.",
     {
-      invoice_id: z.string().describe("The Stripe invoice ID to send"),
+      invoice_id: stripeId.describe("The Stripe invoice ID to send"),
     },
     async ({ invoice_id }) => {
       try {
@@ -272,7 +306,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_void_invoice",
     "Void an invoice so it can no longer be paid. Use this for invoices sent in error.",
     {
-      invoice_id: z.string().describe("The Stripe invoice ID to void"),
+      invoice_id: stripeId.describe("The Stripe invoice ID to void"),
     },
     async ({ invoice_id }) => {
       try {
@@ -288,14 +322,14 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_create_coupon",
     "Create a discount coupon. Specify either percent_off or amount_off, plus duration.",
     {
-      name: z.string().describe("Display name for the coupon"),
-      id: z.string().optional().describe("Custom coupon ID (auto-generated if omitted)"),
-      percent_off: z.number().optional().describe("Percentage discount (e.g., 25 for 25% off)"),
-      amount_off: z.number().optional().describe("Fixed amount discount in cents"),
-      currency: z.string().optional().describe("Currency for amount_off (default: usd)"),
+      name: boundedString("Display name for the coupon"),
+      id: stripeId.optional().describe("Custom coupon ID (auto-generated if omitted)"),
+      percent_off: z.number().min(1).max(100).optional().describe("Percentage discount (1-100)"),
+      amount_off: z.number().int().min(1).max(99999999).optional().describe("Fixed amount discount in cents"),
+      currency: z.string().length(3).optional().describe("Currency for amount_off (default: usd)"),
       duration: z.enum(["once", "repeating", "forever"]).describe("How long the discount lasts"),
-      duration_in_months: z.number().optional().describe("Number of months (required if duration is 'repeating')"),
-      max_redemptions: z.number().optional().describe("Max number of times this coupon can be redeemed"),
+      duration_in_months: z.number().int().min(1).max(120).optional().describe("Number of months (required if duration is 'repeating')"),
+      max_redemptions: z.number().int().min(1).max(1000000).optional().describe("Max number of times this coupon can be redeemed"),
     },
     async ({ name, id, percent_off, amount_off, currency, duration, duration_in_months, max_redemptions }) => {
       try {
@@ -313,7 +347,7 @@ export function registerTools(server: McpServer, client: BillyClient): void {
     "billy_delete_coupon",
     "Delete a coupon so it can no longer be applied to new customers.",
     {
-      coupon_id: z.string().describe("The coupon ID to delete"),
+      coupon_id: stripeId.describe("The coupon ID to delete"),
     },
     async ({ coupon_id }) => {
       try {
